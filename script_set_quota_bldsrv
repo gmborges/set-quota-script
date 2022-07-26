@@ -1,0 +1,196 @@
+#!/bin/bash
+# PURPOSE:  Script utilizado em Build Servers para criar e modificar quotas de usuários
+# AUTHOR:   Gabriel Borges
+# DATE:     03/09/2021
+
+function valida_root (){
+    #Verifica se o script foi executado com o usuário root
+    if [[ $USER != "root" ]]; then
+        echo ""
+        echo "O script deve ser executado como root!"
+        echo "Execute o comando 'sudo su -' e tente novamente."
+        echo ""
+        exit
+    fi
+}
+
+function coleta_usuario (){
+    #Solicita o nome de usuário até um valor ser inserido
+    while [[ -z $USERQUOTA ]];
+    do
+        echo "Informe o nome do usuário:"
+        read USERQUOTA
+    done
+}
+
+function cria_usuario (){
+    useradd $USERQUOTA -m -s /bin/bash -p $(openssl passwd -crypt PASSWORDHERE) &> /dev/null
+
+    echo "=============================="
+    echo "Usuário criado com sucesso!"
+    echo "Nome: $USERQUOTA"
+    echo "Diretório: /home/$USERQUOTA"
+    echo "Output passwd: `getent passwd $USERQUOTA`"
+    echo "=============================="
+}
+
+function altera_quota (){
+    #Solicita o tamanho da quota
+    read -p "Informe o tamanho da quota para o diretório /localrepo (10G ou 1200G): " QUOTA
+    echo $QUOTA
+    sleep 1
+
+    #Verifica se o valor do tamanho da quota foi digitado conforme esperado
+    if [[ $QUOTA != "10G" && $QUOTA != "1200G" ]]; then
+        echo "=============================="
+        echo "Valor inválido. Digite exatamente 10G ou 1200G."
+        echo "=============================="
+        sleep 1
+        exit
+    else
+        #Verifica se o diretório do usuário não existe dentro de /localrepo. Caso não exista, cria o diretório e define as permissões
+        if [[ ! -d /localrepo/$USERQUOTA ]]; then
+            echo "=============================="
+            echo "Criando diretório /localrepo/$USERQUOTA e definindo as permissões..."
+            echo "=============================="
+            sleep 1
+            mkdir /localrepo/$USERQUOTA && chmod 700 /localrepo/$USERQUOTA && chown $USERQUOTA:$USERQUOTA /localrepo/$USERQUOTA
+        fi
+
+        #Configura os valores das quotas no diretório /
+        echo "=============================="
+        echo "Configurando 10G de quota no diretório /"
+        echo "=============================="
+        setquota $USERQUOTA 10G 10G 0 0 /
+        sleep 1
+        echo "Configurações aplicadas no diretório raiz /:"
+        repquota -s / | grep $USERQUOTA
+        
+        #Configura os valores das quotas no diretório /localrepo
+        echo "=============================="
+        echo "Configurando $QUOTA de quota no diretório /localrepo"
+        echo "=============================="
+        setquota $USERQUOTA $QUOTA $QUOTA 0 0 /localrepo
+        sleep 1
+        echo "Configurações aplicadas no diretório /localrepo:"    
+        repquota -s /localrepo | grep $USERQUOTA
+    fi
+}
+
+function deleta_usuario (){
+    echo "Matando todos os processos executados pelo usuário..."; sleep 1
+    killall -u $USERQUOTA
+    echo "Removendo diretório /localrepo/$USERQUOTA..."; sleep 1
+    rm -rf /localrepo/$USERQUOTA
+    echo "Removendo o usuário $USERQUOTA e seu diretório /home/$USERQUOTA..."; sleep 2
+    userdel -r $USERQUOTA 2> /dev/null
+    if [[ $? -eq 0 ]]; then
+        echo "=============================="
+        echo "Usuário removido com sucesso"
+        echo "Diretório /home/$USERQUOTA removido com sucesso"
+        echo "Diretório /localrepo/$USERQUOTA removido com sucesso"
+        echo "=============================="
+    else
+        echo "Houve um problema durante a remoção do usuário :("
+    fi
+}
+
+function main () {
+    
+    valida_root
+
+    OPCAO=""
+
+    while [[ -z $OPCAO || $OPCAO -gt 5 ]];
+    do
+        echo "======================="
+        echo "Automação Build Server"
+        echo "======================="
+        echo "Escolha uma das opções abaixo:"
+        echo "1 - Criar e alterar quota de usuário"
+        echo "2 - Criar somente usuário"
+        echo "3 - Alterar quota de usuário"
+        echo "4 - Deletar um usuário"
+        echo "5 - Sair"
+        echo ""
+
+        read OPCAO
+        
+        case $OPCAO in
+            1)
+                echo "Você escolheu a opção $OPCAO"
+                sleep 1
+
+                coleta_usuario
+                echo "Processando usuário..."; sleep 1 
+                if id $USERQUOTA &> /dev/null; then
+                    echo "======================="
+                    echo "Usuário JÁ existe"
+                    echo "======================="
+
+                else
+                    cria_usuario
+                    sleep 2
+                    altera_quota
+                fi
+            ;;
+            2)
+                echo "Você escolheu a opção $OPCAO"
+                sleep 1
+
+                coleta_usuario
+                echo "Processando usuário..."; sleep 1 
+                if id $USERQUOTA &> /dev/null; then
+                    echo "======================="
+                    echo "Usuário JÁ existe"
+                    echo "======================="
+
+                else
+                    cria_usuario
+                    sleep 2
+                fi
+            ;;
+            3)
+                echo "Você escolheu a opção $OPCAO"
+                sleep 1
+
+                coleta_usuario
+                echo "Processando usuário..."; sleep 1 
+                if id $USERQUOTA &> /dev/null; then
+                    altera_quota
+                    sleep 2
+                else
+                    echo "======================="
+                    echo "Usuário NÃO existe"
+                    echo "======================="
+                fi
+            ;;
+            
+            4)
+                echo "Você escolheu a opção $OPCAO"
+                sleep 1
+                
+                coleta_usuario
+                echo "Processando usuário..."; sleep 1
+                if id $USERQUOTA &> /dev/null; then
+                    deleta_usuario
+                    sleep 2
+                else
+                    echo "======================="
+                    echo "Usuário NÃO existe"
+                    echo "======================="
+                fi
+            ;;
+            5)
+                exit
+            ;;
+            *)
+                echo -e "Opção inválida \n"
+                sleep 1
+                continue
+            ;;
+        esac
+    done
+}
+
+main
